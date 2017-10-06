@@ -2,6 +2,19 @@
 // This file is licensed under the MIT License
 // http://opensource.org/licenses/MIT
 
+// Import Libraries
+#require "ConnectionManager.lib.nut:2.0.0"
+#require "conctr.device.class.nut:2.0.0"
+#require "WS2812.class.nut:2.0.2"
+#require "HTS221.class.nut:1.0.0"
+#require "LPS22HB.class.nut:1.0.0"
+#require "LIS3DH.class.nut:1.3.0"
+#require "Button.class.nut:1.2.0"
+
+// Copyright (c) 2017 Mystic Pants Pty Ltd
+// This file is licensed under the MIT License
+// http://opensource.org/licenses/MIT
+
 // Default configuration of the sleep pollers
 const DEFAULT_POLLFREQ1 = 172800;
 const DEFAULT_POLLFREQ2 = 86400;
@@ -508,3 +521,481 @@ class ImpExplorer {
     }
 
 }
+// MIT License
+
+// Copyright (c) 2017 Mystic Pants Pty Ltd
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+class RemotePin {
+    DEBUG = false;
+    _pinLetter = null;
+    _pin = null;
+    constructor(pinLetter) {
+        _pinLetter = pinLetter;
+        _pin = hardware["pin"+ pinLetter];
+    }
+    
+    // function that configures the pin
+    // 
+    // @param     pinType     - Pin type same as default imp configurations
+    // @param     startState  - initial state of the pin.
+    // @returns   none
+    // 
+    function configure(pinType, startState = 0) {
+        if (pinType == DIGITAL_IN || pinType == DIGITAL_IN_PULLDOWN || pinType == DIGITAL_IN_PULLUP||pinType == ANALOG_IN) {
+            _pin.configure(pinType);
+        } else {
+            _pin.configure(pinType, startState);
+        }        
+    }
+    
+    // function that sets the pin to a state
+    // 
+    // @param     state     - state to set pin to (0/1)
+    // @param     holdtime  - how long to hold for
+    // @param     cb        - callback to be called when complete
+    // @returns   none
+    // 
+    function write(state, holdtime = null, cb = null) {
+        if (DEBUG) cm.log("Setting pin" + _pinLetter + " to :" + state);
+        _pin.write(state);       
+
+        if (holdtime != null) {
+            imp.wakeup(holdtime, function() {
+                local inv_state = (!state).tointeger();
+                cm.log(inv_state);
+                _pin.write(inv_state); 
+                if (cb) cb();
+            }.bindenv(this));
+        }
+    }
+    
+}
+
+
+
+class Logger {
+    
+    _uart = null;
+    _debug = null;
+
+    // Pass the UART object, eg. hardware.uart6E, Baud rate, and Offline Enable True/False
+    // UART is enabled by default
+
+    constructor(uart = null, baud = 9600, enable = true) {
+        if (uart == null) {
+            server.error("Logger requires a valid imp UART object");
+            return null;
+        }
+        
+        _uart = uart;
+        _debug = enable;
+    }
+
+    function enable() {
+        _uart.configure(baud, 8, PARITY_NONE, 1, NO_RX | NO_CTSRTS);
+        _debug = true;
+    }
+
+    function disable() {
+        _debug = false;
+    }
+
+    function log(message) {
+        if (_debug) {
+            _uart.write("[LOG] " + message + "\n");
+            _uart.flush();
+            if (server.isconnected()) server.log(message);
+        }
+    }
+    
+    function error(message) {
+        if (_debug) {
+            _uart.write("[ERR] " + message + "\n");
+            _uart.flush();
+            if (server.isconnected()) server.error(message);
+        }
+    }
+}
+// MIT License
+
+// Copyright (c) 2017 Mystic Pants Pty Ltd
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+
+class VOCSensor{
+    REG_READING = "";
+    CMD_STATUS = "\x0C\x00\x00\x00\x00";
+    _i2c = null;
+    _addr = 0xE0;
+    
+    constructor(i2c, onewire_en) {
+        _i2c = i2c;      
+        _i2c.configure(CLOCK_SPEED_100_KHZ);  
+        onewire_en.configure(DIGITAL_OUT, 1);
+    }
+    
+    function readStatus(cb = null) {
+        // Send Request
+        local readingRequest = blob(6);
+        readingRequest.writestring(CMD_STATUS);
+        readingRequest.writen(_calcCRC(readingRequest), 'c');
+        _send(readingRequest.tostring());
+        cm.log("Request Sent");
+        // Add slight delay
+        imp.wakeup(0.1, function() {
+
+            local result = _i2c.read(_addr, REG_READING, 7);
+            if (result == null) {
+                throw "I2C read error: " + _i2c.readerror();
+            } else if (result == "") {
+                // Empty string
+            } else {
+                local data = _parseFrame(result);
+                if (data != null) {
+                    local VOC = (data[0] - 13) * (1000.0 / 229); // ppb: 0 .. 1000
+                    local CO2 = (data[1] - 13) * (1600.0 / 229) + 400; // ppm: 400 .. 2000
+
+                    cm.log("VOC: " + VOC + " CO2: " + CO2);
+                    
+                    local result = {
+                        "voc" : VOC,
+                        "co2" : CO2,
+                    };
+                            
+                    // Return table if no callback was passed
+                    if (cb == null) { return result; }
+            
+                    // Invoke the callback if one was passed
+                    imp.wakeup(0, function() { cb(result); });
+                }
+            }
+        }.bindenv(this));
+    }
+    
+    function _parseFrame(data) {
+        local body = blob(6);
+        body.writestring(data.tostring().slice(0,6))
+        
+        // Verify CRC
+        if (_calcCRC(body) == data[6]) {
+           return body; 
+        } else {           
+            return null;
+        }
+    }
+    
+    function _send(message) {
+        _i2c.write(_addr, message);
+    }
+    
+    function _calcCRC(inputBlob) {
+        local crc = 0x00;
+        local sum = 0x0000;
+        
+        // Loop over inputBlob
+        for (local i = 0; i < inputBlob.len(); i++) {
+            sum = crc + inputBlob[i];
+            crc = 0x00FF & sum;
+            crc += (sum / 0x100);
+        }
+        // complement
+        crc = 0xFF - crc; 
+        
+        return crc; 
+    }
+    
+}
+// Copyright (c) 2017 Mystic Pants Pty Ltd
+// This file is licensed under the MIT License
+// http://opensource.org/licenses/MIT
+
+class CurrentSensor{
+    DEBUG = false;
+    WINDING_RATIO = 60;
+    GAUGE_FILTER = 100;
+    GAUGE_RATIO = 20.0;
+    ZERO_OFFSET = 120;
+    MAX_ADC = 65535.0;
+    POLL_FREQ = 0.5;
+    _currentSensorPin = null;
+    
+    constructor(currentSensorPin) {
+        _currentSensorPin = currentSensorPin;
+        _currentSensorPin.configure(ANALOG_IN);
+    }
+    
+    // function that reads the current
+    // 
+    // @params none
+    // @returns none
+    // 
+    function readCurrent(cb = null) {
+        local maxReading = 0;
+        local minReading = 0;
+        local currentGauge = 0; 
+        local previousReading = 0;
+        
+        // Take 1000 samples
+        for (local i = 0; i < 1000; i++) {
+            // Average every 3 readings
+            local currentReading = (_currentSensorPin.read() + _currentSensorPin.read() + _currentSensorPin.read())/3.0;
+            previousReading = currentReading;
+
+            // If the reading is larger, save as maxReading.
+            if (currentReading > maxReading) {
+                maxReading = currentReading;
+                // Apply a Lowpass Filter
+                currentGauge = currentGauge + (currentReading - currentGauge)/GAUGE_FILTER;
+            }
+
+            // If the reading is smaller,save as minReading
+            if (currentReading < minReading) {
+                minReading = currentReading;
+                
+            }
+        }
+
+        // Calculate the voltage amplitude and current
+        local voltageDiff = (maxReading - minReading - ZERO_OFFSET)/ MAX_ADC * hardware.voltage();
+        local calcCurrent = voltageDiff*WINDING_RATIO;
+        currentGauge = (currentGauge/GAUGE_RATIO);
+        
+        local result = {
+            "current" : calcCurrent, 
+            "currentgauge": currentGauge.tointeger(),
+        }
+        
+        if (DEBUG){
+            server.log("Our Current Gauge Shows:" + currentGauge);
+            server.log("Our Sensor Voltage Reading is:" + voltageDiff);
+            server.log("Our Current Reading is:" + calcCurrent);
+        }
+        
+        // Return table if no callback was passed
+        if (cb == null) { return result; }
+
+        // Invoke the callback if one was passed
+        imp.wakeup(0, function() { cb(result); });
+    }
+    
+}
+// Copyright (c) 2017 Mystic Pants Pty Ltd
+// This file is licensed under the MIT License
+// http://opensource.org/licenses/MIT
+
+class LoRa {
+    
+    _uart = null;
+    _receivedResponse = null;
+    _queue = null;
+    _currentCommand = null;
+    
+    
+    static COMMANDS = {
+        "AT+DTX" : regexp(@"OK$"),
+    }
+    
+    constructor(uart, onewire_en, params = {}) {
+        local baudRate = ("baudRate" in params) ? params.baudRate : 9600;
+        local wordSize = ("wordSize" in params) ? params.wordSize : 8;
+        local parity = ("parity" in params) ? params.parity : PARITY_NONE;
+        local stopBits = ("stopBits" in params) ? params.stopBits : 1;
+        local flags = ("flags" in params) ? params.flags : NO_CTSRTS;
+        _receivedResponse = "";
+        _queue = [];
+        _uart = uart;
+        _uart.configure(baudRate, wordSize, parity, stopBits, flags, _receiveData.bindenv(this));
+        onewire_en.configure(DIGITAL_OUT, 1);
+    }
+    
+    function sendMessage(message) {
+        _enqueue(function(){
+            if (typeof message == "blob") {
+                message = _blobToHexString(message);   
+                _sendCommand("AT+DTX", "=" + message.len() + "," +message); 
+            } else {
+                _sendCommand("AT+DTX", "=" + message.len() + "," + "\"" + message + "\"");
+            }
+        }.bindenv(this));
+    }
+
+    function _receiveData() {
+        local data = _uart.readstring();
+        _receivedResponse += data;
+        server.log(data.tostring());
+        
+        // TODO: Read and interpret error messages
+        /*
+        local hasError = _receivedResponse.find("ERROR") != null;
+        if (COMMANDS[_currentCommand].capture(_receivedResponse) || hasError) {
+            server.log("receiving data : " + _receivedResponse);
+            if (hasError) {
+                throw "Error sending command : " + _currentCommand;
+            } else {
+                _processResponse(_receivedResponse);
+            }
+            _receivedResponse = "";
+            _nextInQueue();
+        }
+        */
+    }
+    
+    function _processResponse(response){
+        
+    }
+    
+    function _sendCommand(command, query = "") {
+        _currentCommand = command;
+        _uart.write(command);
+        _uart.write(query);
+        _uart.write("\n");
+        server.log("sending command : " + command);
+        server.log("query : " + query);
+    }
+    
+    function _nextInQueue() {
+        _queue.remove(0);
+        if (_queue.len() > 0) {
+            imp.wakeup(0, function(){
+                _queue[0]();
+            }.bindenv(this));
+        }
+    }
+    
+    function _enqueue(action) {
+        _queue.push(action);
+        if (_queue.len() == 1) {
+            imp.wakeup(0, function(){
+                action();
+            }.bindenv(this));
+        }
+    }
+
+    function _blobToHexString(blob) {
+        local hexString = "";
+        for (local i=0; i < blob.len(); i++) {
+            hexString += format("%02X", blob[i]);
+        }
+        
+        return hexString;
+    }
+    
+}
+
+
+
+
+//=============================================================================
+// START OF PROGRAM
+
+// Initialise nv ram
+if (!("nv" in getroottable()) || !("sleepTime" in ::nv) || !("config" in ::nv)) {
+    ::nv <- { "sleepTime" : NO_WIFI_SLEEP_PERIOD, "config": {} };
+}
+
+// Start the offline logger
+onewire_en <- hardware.pinS;
+onewire_en.configure(DIGITAL_OUT, 0); // DISABLED FOR NOW
+uart <- hardware.uartFG;
+globalDebug <- Logger(uart, 9600);
+globalDebug.disable();
+globalDebug.log(format("Started with wakereason %d and sleepTime %d", hardware.wakereason(), ::nv.sleepTime));
+
+
+// Connection manager
+cm <- ConnectionManager({ "blinkupBehavior": ConnectionManager.BLINK_ALWAYS, "retryOnTimeout": false});
+imp.setsendbuffersize(8096);
+
+// Checks hardware type
+if ("pinW" in hardware) {
+    hardwareType <- HardwareType.environmentSensor;
+    // server.log("This is an Environmental Sensor")
+} else {
+    hardwareType <- HardwareType.impExplorer;
+    // server.log("This is an impExplorer")
+}
+
+// Configures the pins depending on hardware type
+if (hardwareType == HardwareType.environmentSensor) {
+    batt <- hardware.pinH;
+    batt.configure(ANALOG_IN);
+    wakepin <- hardware.pinW;
+    ledblue <- hardware.pinP;
+    ledblue.configure(DIGITAL_OUT, 1);
+    ledgreen <- hardware.pinU;
+    ledgreen.configure(DIGITAL_OUT, 1);
+    i2cpin <- hardware.i2cAB;
+    i2cpin.configure(CLOCK_SPEED_400_KHZ);
+} else {
+    batt <- null;
+    wakepin <- hardware.pin1;
+    ledblue <- null;
+    ledgreen <- null;
+    i2cpin <- hardware.i2c89;
+    i2cpin.configure(CLOCK_SPEED_400_KHZ);
+    spi <- hardware.spi257;
+    spi.configure(MSB_FIRST, 7500);
+    rgbLED <- WS2812(spi, 1);
+}
+
+// Initialise accellerometer
+accel <- LIS3DH(i2cpin, LIS3DH_ADDR);
+accel.setDataRate(100);
+accel.configureClickInterrupt(true, LIS3DH.DOUBLE_CLICK, 2, 15, 10, 300);
+accel.configureInterruptLatching(true);
+
+// Setup other sensors
+pressureSensor <- LPS22HB(i2cpin, hardwareType == HardwareType.environmentSensor ? LPS22HB_ADDR_ES : LPS22HB_ADDR_IE);
+pressureSensor.softReset();
+tempHumid <- HTS221(i2cpin);
+tempHumid.setMode(HTS221_MODE.ONE_SHOT, 7);
+
+// Start the application
+conctr <- Conctr({"sendLoc": false});
+impExplorer <- ImpExplorer();
+
+// Start polling after the imp is idle
+imp.wakeup(0, function(){
+    impExplorer.init();
+    impExplorer.poll();
+}.bindenv(this));
+
+
+
+
+

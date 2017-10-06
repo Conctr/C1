@@ -11,12 +11,12 @@
 #require "LIS3DH.class.nut:1.3.0"
 #require "Button.class.nut:1.2.0"
 
-#include "libs/ImpExplorer.class.lib.nut"
-#include "libs/RemotePin.class.lib.nut"
-#include "libs/Logger.class.lib.nut"
-#include "libs/VOC.class.lib.nut"
-#include "libs/CurrentSensor.class.lib.nut"
-#include "libs/LoRa.class.lib.nut"
+@include "./libs/ImpExplorer.class.lib.nut"
+@include "./libs/RemotePin.class.lib.nut"
+@include "./libs/Logger.class.lib.nut"
+@include "./libs/VOC.class.lib.nut"
+@include "./libs/CurrentSensor.class.lib.nut"
+@include "./libs/LoRa.class.lib.nut"
 
 
 
@@ -35,7 +35,7 @@ onewire_en.configure(DIGITAL_OUT, 0); // DISABLED FOR NOW
 uart <- hardware.uartFG;
 globalDebug <- Logger(uart, 9600);
 globalDebug.disable();
-globalDebug.log(format("Started with wakereason %d and sleepTime %d", hardware.wakereason(), ::nv.sleepTime))
+globalDebug.log(format("Started with wakereason %d and sleepTime %d", hardware.wakereason(), ::nv.sleepTime));
 
 
 // Connection manager
@@ -82,6 +82,7 @@ accel.configureInterruptLatching(true);
 
 // Setup other sensors
 pressureSensor <- LPS22HB(i2cpin, hardwareType == HardwareType.environmentSensor ? LPS22HB_ADDR_ES : LPS22HB_ADDR_IE);
+pressureSensor.softReset();
 tempHumid <- HTS221(i2cpin);
 tempHumid.setMode(HTS221_MODE.ONE_SHOT, 7);
 

@@ -5,8 +5,8 @@ The C1 you receive will be **blessed** with default firmware which you won't be 
 
 To run this code on your C1, you will first need to **unbless** your device. To do so, contact us at <support@conctr.com>.
 
-### Wrench ###
-To install wrench, you can follow the instructions at <https://github.com/nightrune/wrench>.
+### Imp Builder ###
+To install Imp Builder, you can follow the instructions at <https://electricimp.com/docs/tools/builder/>.
 Just compile and upload to your electric imp account.
 
 

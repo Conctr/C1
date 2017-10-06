@@ -6,7 +6,8 @@
 #require "IFTTT.class.nut:1.0.0"
 #require "JSONEncoder.class.nut:1.0.0"
 #require "PrettyPrinter.class.nut:1.0.1"
-#include "libs/conctr.agent.lib.nut"
+
+@include "./libs/conctr.agent.lib.nut"
 
 const APP_ID = "<PLACE YOUR APP_ID HERE>";
 const API_KEY = "<PLACE YOUR API_KEY HERE>";
@@ -71,7 +72,6 @@ class ImpExplorer {
 
             _savedData = initialData;
             _savedData.config.remoteTrigger <- null;
-
             server.save(_savedData);
 
         }
